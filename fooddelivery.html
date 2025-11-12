@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Food Delivery — Design Patterns Demo</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:0;background:#f6f7fb;color:#111}
+    header{background:#111;color:#fff;padding:18px 24px}
+    .container{max-width:1000px;margin:20px auto;padding:18px;background:#fff;border-radius:10px;box-shadow:0 6px 24px rgba(16,24,40,0.06)}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
+    label{display:block;margin:8px 0 6px;font-weight:600}
+    input,select,button,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #e6e9ef;font-size:14px}
+    button{cursor:pointer}
+    .log{height:300px;overflow:auto;border:1px dashed #e6e9ef;padding:10px;border-radius:8px;background:#fbfdff}
+    .small{font-size:13px;color:#555}
+    .agents{display:flex;gap:8px;flex-wrap:wrap}
+    .agent{padding:8px 10px;border-radius:8px;border:1px solid #e6e9ef;background:#fff;min-width:120px}
+    .status{font-weight:700}
+    footer{padding:14px;text-align:center;color:#666;font-size:13px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1 style="margin:0;font-size:20px">Food Delivery — OO & Behavioral Patterns Demo</h1>
+    <div class="small">Observer (restaurant->delivery agents) • Strategy (delivery fee) • Command (place/cancel/track)</div>
+  </header>
+
+  <main class="container">
+    <div class="grid">
+      <section>
+        <h2>Place an order</h2>
+        <div>
+          <label>Customer name</label>
+          <input id="customerName" placeholder="e.g. Priya" value="Priya" />
+          <label>Restaurant</label>
+          <select id="restaurantSelect"></select>
+          <label>Items (CSV)</label>
+          <input id="items" value="Paneer Butter Masala x1, Naan x2" />
+          <label>Delivery Strategy</label>
+          <select id="strategySelect">
+            <option value="standard">Standard Delivery</option>
+            <option value="express">Express Delivery (+50%)</option>
+            <option value="coupon">Free with coupon</option>
+          </select>
+          <label>Order Amount (₹)</label>
+          <input id="amount" value="420" />
+          <div style="display:flex;gap:10px;margin-top:12px">
+            <button id="placeBtn">Place Order</button>
+            <button id="cancelBtn">Cancel Order</button>
+            <button id="trackBtn">Track Order</button>
+          </div>
+        </div>
+
+        <h3 style="margin-top:18px">Orders</h3>
+        <div id="ordersList" class="log"></div>
+      </section>
+
+      <aside>
+        <h3>System Log</h3>
+        <div id="sysLog" class="log"></div>
+
+        <h3 style="margin-top:14px">Delivery Agents (Observers)</h3>
+        <div id="agents" class="agents"></div>
+
+        <h3 style="margin-top:14px">Design Notes</h3>
+        <p class="small">This demo uses ES6 classes to model the patterns. The Restaurant acts as the Subject (Observer pattern) and notifies registered DeliveryAgent observers when orders are placed, canceled or updated. Delivery fee calculation is done via Strategy objects injected into the Order (Strategy pattern). User actions are wrapped with Command objects executed by an Invoker (Command pattern).</p>
+      </aside>
+    </div>
+  </main>
+
+  <footer>Open — extend: add persistence, real push notifications, routing and maps.</footer>
+
+<script>
+/* ----------------- Domain & Patterns Implementation (OO-style) ----------------- */
+
+// Utility
+const $ = id => document.getElementById(id);
+const log = (...args) => { const el = $('sysLog'); el.innerHTML += <div>${args.map(a => typeof a==='object'?JSON.stringify(a):a).join(' ')}</div>; el.scrollTop = el.scrollHeight; };
+
+// ---------- Observer Pattern (Restaurant -> DeliveryAgent) ----------
+class Restaurant {
+  constructor(name) {
+    this.name = name;
+    this.observers = new Set();
+  }
+  register(observer){ this.observers.add(observer); }
+  unregister(observer){ this.observers.delete(observer); }
+  notify(event){ // event: {type, order}
+    this.observers.forEach(o => o.update(this, event));
+  }
+}
+
+class DeliveryAgent {
+  constructor(name){ this.name = name; }
+  update(restaurant, event){
+    // handle notification from restaurant
+    log(Agent ${this.name} received ${event.type} for order ${event.order.id} from ${restaurant.name});
+    // simple auto-accept simulation
+    if(event.type === 'newOrder'){
+      event.order.assignAgent(this.name);
+    }
+  }
+}
+
+// ---------- Strategy Pattern (Delivery Fee) ----------
+class DeliveryFeeStrategy {
+  calculate(amount) { throw new Error('Implement calculate'); }
+}
+class StandardDelivery extends DeliveryFeeStrategy {
+  calculate(amount){ return Math.round(Math.max(30, amount * 0.05)); }
+}
+class ExpressDelivery extends DeliveryFeeStrategy {
+  calculate(amount){ return Math.round(Math.max(60, amount * 0.08)); }
+}
+class CouponDelivery extends DeliveryFeeStrategy {
+  constructor(couponValue = 0){ super(); this.couponValue = couponValue; }
+  calculate(amount){
+    return Math.max(0, Math.round(Math.max(0, amount * 0.05) - this.couponValue));
+  }
+}
+
+// ---------- Order & Repository ----------
+let ORDER_ID = 1000;
+class Order {
+  constructor({customer, restaurant, items, amount, feeStrategy}){
+    this.id = ++ORDER_ID;
+    this.customer = customer;
+    this.restaurant = restaurant;
+    this.items = items;
+    this.amount = Number(amount);
+    this.feeStrategy = feeStrategy;
+    this.deliveryAgent = null;
+    this.status = 'Created';
+    this.createdAt = new Date();
+  }
+  getDeliveryFee(){ return this.feeStrategy.calculate(this.amount); }
+  assignAgent(agentName){ this.deliveryAgent = agentName; this.status = 'Assigned to ' + agentName; renderOrders(); }
+  cancel(){ this.status = 'Canceled'; }
+}
+
+class OrderRepository {
+  constructor(){ this.orders = new Map(); }
+  add(order){ this.orders.set(order.id, order); }
+  get(id){ return this.orders.get(Number(id)); }
+  all(){ return Array.from(this.orders.values()).sort((a,b) => b.id - a.id); }
+}
+
+const repo = new OrderRepository();
+
+// ---------- Command Pattern (Encapsulate user actions) ----------
+class Command {
+  execute(){ throw new Error('execute'); }
+}
+class PlaceOrderCommand extends Command{
+  constructor(orderData, restaurant){ super(); this.orderData = orderData; this.restaurant = restaurant; }
+  execute(){
+    const order = new Order({...this.orderData});
+    repo.add(order);
+    this.restaurant.notify({type:'newOrder', order});
+    log(Order placed: ${order.id} - Customer: ${order.customer} - Fee: ₹${order.getDeliveryFee()});
+    renderOrders();
+    return order;
+  }
+}
+class CancelOrderCommand extends Command{
+  constructor(orderId, restaurant){ super(); this.orderId = orderId; this.restaurant = restaurant; }
+  execute(){
+    const o = repo.get(this.orderId);
+    if(!o) { log(Cancel failed: order ${this.orderId} not found); return; }
+    if(o.status.startsWith('Canceled')){ log(Order ${this.orderId} already canceled); return; }
+    o.cancel();
+    this.restaurant.notify({type:'canceled', order:o});
+    log(Order ${o.id} canceled);
+    renderOrders();
+  }
+}
+class TrackOrderCommand extends Command{
+  constructor(orderId){ super(); this.orderId = orderId; }
+  execute(){
+    const o = repo.get(this.orderId);
+    if(!o) { log(Track failed: order ${this.orderId} not found); return; }
+    log(Track: Order ${o.id} — status: ${o.status} — agent: ${o.deliveryAgent || 'unassigned'});
+  }
+}
+
+class CommandInvoker{
+  constructor(){ this.history = []; }
+  run(cmd){ const res = cmd.execute(); this.history.push({cmd, res, ts:new Date()}); return res; }
+}
+const invoker = new CommandInvoker();
+
+// ----------------- Setup sample data & UI  -----------------
+const restaurants = [new Restaurant('Spice Villa'), new Restaurant('The Curry Pot')];
+const agents = [new DeliveryAgent('Ramesh'), new DeliveryAgent('Anita'), new DeliveryAgent('Vikram')];
+// register agents to all restaurants
+restaurants.forEach(r => agents.forEach(a => r.register(a)));
+
+function renderAgents(){
+  const el = $('agents'); el.innerHTML = '';
+  agents.forEach(a => {
+    const d = document.createElement('div'); d.className='agent'; d.textContent = a.name; el.appendChild(d);
+  });
+}
+
+function renderOrders(){
+  const el = $('ordersList'); el.innerHTML = '';
+  repo.all().forEach(o => {
+    const div = document.createElement('div');
+    div.innerHTML = `<div><strong>#${o.id}</strong> ${o.customer} — ${o.restaurant.name}</div>
+      <div class="small">items: ${o.items} | amount: ₹${o.amount} | fee: ₹${o.getDeliveryFee()} | <span class="status">${o.status}</span></div><hr>`;
+    el.appendChild(div);
+  });
+}
+
+function populateRestaurantSelect(){
+  const sel = $('restaurantSelect'); sel.innerHTML='';
+  restaurants.forEach((r,i)=>{
+    const opt = document.createElement('option'); opt.value = i; opt.textContent = r.name; sel.appendChild(opt);
+  });
+}
+
+// ----------------- Wire UI to Commands -----------------
+$('placeBtn').addEventListener('click', ()=>{
+  const data = {
+    customer: $('customerName').value.trim() || 'Guest',
+    restaurant: restaurants[$('restaurantSelect').value],
+    items: $('items').value,
+    amount: Number($('amount').value) || 0,
+    feeStrategy: strategyFromSelect($('strategySelect').value)
+  };
+  const cmd = new PlaceOrderCommand(data, data.restaurant);
+  invoker.run(cmd);
+});
+
+$('cancelBtn').addEventListener('click', ()=>{
+  const id = prompt('Enter order id to cancel (e.g. 1001):'); if(!id) return;
+  const restaurant = restaurants[$('restaurantSelect').value];
+  const cmd = new CancelOrderCommand(id, restaurant);
+  invoker.run(cmd);
+});
+
+$('trackBtn').addEventListener('click', ()=>{
+  const id = prompt('Enter order id to track (e.g. 1001):'); if(!id) return;
+  const cmd = new TrackOrderCommand(id);
+  invoker.run(cmd);
+});
+
+function strategyFromSelect(key){
+  if(key === 'standard') return new StandardDelivery();
+  if(key === 'express') return new ExpressDelivery();
+  if(key === 'coupon') return new CouponDelivery(50);
+  return new StandardDelivery();
+}
+
+// init UI
+populateRestaurantSelect(); renderAgents(); renderOrders();
+
+// add some demo orders to show flow
+(function seed(){
+  const cmd1 = new PlaceOrderCommand({customer:'Arjun',restaurant:restaurants[0],items:'Dosa x1',amount:220,feeStrategy:new StandardDelivery()}, restaurants[0]);
+  invoker.run(cmd1);
+  const cmd2 = new PlaceOrderCommand({customer:'Meera',restaurant:restaurants[1],items:'Butter Chicken x1',amount:520,feeStrategy:new ExpressDelivery()}, restaurants[1]);
+  invoker.run(cmd2);
+})();
+
+</script>
+</body>
+</html>
